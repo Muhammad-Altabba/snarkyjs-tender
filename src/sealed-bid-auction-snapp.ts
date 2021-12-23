@@ -35,14 +35,14 @@ class SealedBidAuctionSnapp extends SmartContract {
   participationCost: UInt64;
 
   winner: PublicKey = this.address;
-  lowestBid: number;
+  lowestBid: UInt64;
 
   constructor(
     address: PublicKey,
     initialBalance: UInt64,
     biddersWhitelist: Array<PublicKey>,
     participationCost: number,
-    bidThreshold: number
+    bidThreshold: UInt64
   ) {
     super(address);
     this.biddersWhitelist = biddersWhitelist;
@@ -54,7 +54,7 @@ class SealedBidAuctionSnapp extends SmartContract {
   }
 
   // requires a bid from one of the keys in the list
-  @method async bid(amount: number) {
+  @method async bid(amount: UInt64) {
     if (!Mina.currentTransaction?.sender.toPublicKey()) {
       throw new Error('Not able to get Mina.currentTransaction');
     }
@@ -69,14 +69,26 @@ class SealedBidAuctionSnapp extends SmartContract {
     if (!isWhiteListed.toBoolean()) {
       throw new Error('Only whitelisted can bid');
     } else {
-      console.log('Recieved a bid', amount.toString());
+      console.log('Received a bid');
     }
-
     const publicKey = Mina.currentTransaction?.sender.toPublicKey();
-    console.log('amount', amount.toString());
-    console.log('this.lowestBid', this.lowestBid);
-    if (amount < this.lowestBid) {
-      this.lowestBid = amount;
+
+    // The following commented code produce an exception:
+    //  Error happened when trying to bid! Error: rangeCheckHelper:
+    //  Expected 28948022309329048855892746252171976963363056481941560715954676764349966633661 to fit in 64 bits
+    // Because of the exception, the code is commented and replaced with the next if
+    // this.lowestBid = Circuit.if(
+    //   amount.lt(this.lowestBid),
+    //   amount,
+    //   this.lowestBid
+    // );
+    // this.winner = Circuit.if(amount.lt(this.lowestBid), publicKey, this.winner);
+
+    // Note: the following seems to be a hack and the previous commented code sounds better but produce an exception
+    const lowestBid = Number.parseInt(this.lowestBid.toString());
+    const bidAmount = Number.parseInt(amount.toString());
+    if (bidAmount < lowestBid) {
+      this.lowestBid = UInt64.fromNumber(bidAmount);
       this.winner = publicKey;
     }
 
@@ -87,7 +99,7 @@ class SealedBidAuctionSnapp extends SmartContract {
     this.balance.addInPlace(this.participationCost);
   }
   @method async revealWinner(): Promise<{
-    lowestBid: number;
+    lowestBid: string;
     winner: PublicKey;
   }> {
     if (!Mina.currentTransaction?.sender.toPublicKey()) {
@@ -103,12 +115,10 @@ class SealedBidAuctionSnapp extends SmartContract {
     ).assertEquals(true);
 
     // Pay the best bidder to do the work
-    this.balance.subInPlace(UInt64.fromNumber(this.lowestBid));
-    Party.createUnsigned(this.winner).balance.addInPlace(
-      UInt64.fromNumber(this.lowestBid)
-    );
+    this.balance.subInPlace(this.lowestBid);
+    Party.createUnsigned(this.winner).balance.addInPlace(this.lowestBid);
 
-    return { lowestBid: this.lowestBid, winner: this.winner };
+    return { lowestBid: this.lowestBid.toString(), winner: this.winner };
   }
 }
 
@@ -177,7 +187,7 @@ async function deploy(
         initialBalance,
         bidders,
         participationCost,
-        bidThreshold
+        UInt64.fromNumber(bidThreshold)
       );
     });
     await tx.send().wait();
@@ -196,7 +206,7 @@ async function bid(account: PrivateKey, amount: number) {
 
   let tx = Mina.transaction(account, async () => {
     console.log('bidding...');
-    await snappInstance.bid(amount);
+    await snappInstance.bid(UInt64.fromNumber(amount));
   });
   try {
     await tx.send().wait();
